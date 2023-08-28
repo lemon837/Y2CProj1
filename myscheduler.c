@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <string.h>
+#include <stdbool.h>
 
 //  CITS2002 Project 1 2023
 //  Student1:   22976862    Frederick Leman
@@ -34,13 +35,39 @@
 #define CHAR_SYSCALL                            '\t'
 
 int time_quantum;
+int device_num = 0;
+int command_num = -1;
 
 // Define a structure to hold the devices, their speeds, then declare 4 of them
-struct {
+// Define an array of device structures of length 4
+struct devices {
     char name[MAX_DEVICE_NAME];
     int r_speed;
     int w_speed;
 } devices[MAX_DEVICES];
+
+struct devices device_array[MAX_DEVICES];
+
+// Define a structure to hold syscalls
+
+struct syscalls {
+    char name[100];
+    int exec_time;
+    char io_device[MAX_DEVICE_NAME];
+    int data_transfer;
+};
+
+// Define a structure to hold the commands, their speeds, then declare 10 of them
+// Within a single command struct, there is an array of syscall structs
+
+struct commands {
+    char name[MAX_COMMAND_NAME];
+    struct syscalls syscall_array[MAX_SYSCALLS_PER_PROCESS];
+} commands[MAX_COMMANDS];
+
+// Define an array of command structures of length 10
+
+struct commands command_array[MAX_COMMANDS];
 
 //  ----------------------------------------------------------------------
 
@@ -48,13 +75,12 @@ void read_sysconfig(char filename[])
 {
     FILE *file = fopen(filename, "r");                      // Opens the sysconfig file
     if (file == NULL) {
-        printf("There was an error in opening the file");
+        printf("There was an error in opening the sysconfigfile\n");
         exit(EXIT_FAILURE);
     }
     
     char line[128];
     printf("Device List:\n");
-    int device_num = 0;
 
     while(fgets(line, sizeof line, file) != NULL) {
         if (line[0] == CHAR_COMMENT) {                      // Skips comment lines beginning with "#"
@@ -90,8 +116,11 @@ void read_sysconfig(char filename[])
         if (line[0] == CHAR_TIME_QUANTUM) {
             char *token = strtok(line, " ");                // Creates a token of the time quantum line
             time_quantum = atoi(strtok(0, " "));            // Iterates once to the second token, assigns to global variable
-            printf("\nTime Quantum: %d\n", time_quantum);
         }
+    }
+
+    for (int i = 0; i < 4; i++) {                           // Adds the device structures to an array of device structures
+        device_array[i] = devices[i];
     }
 
     for (int i = 0; i < 4; i++) {                           // To test the function, print all the sysconfig variables
@@ -99,14 +128,89 @@ void read_sysconfig(char filename[])
         printf("R: %d ", devices[i].r_speed);
         printf("W: %d\n", devices[i].w_speed);
     }
-}
-
-void read_commands(char filename[])
-{
-
+    printf("Time Quantum: %d\n", time_quantum);
 }
 
 //  ----------------------------------------------------------------------
+
+void read_commands(char filename[])
+{
+    FILE *file = fopen(filename, "r");                      // Opens the command file
+    if (file == NULL) {
+        printf("There was an error in opening the command file");
+        exit(EXIT_FAILURE);
+    }
+    
+    char line[128];
+    int syscall_num = 0;
+    bool next_line_is_name = false;
+    printf("Command List:\n");
+
+    while(fgets(line, sizeof line, file) != NULL) {
+
+        if (next_line_is_name == true) {                       // If this line was preceded by a "#" line, it is the name of
+            strcpy(commands[command_num].name, line);          // the next command
+            next_line_is_name = false;
+            continue;
+        }
+
+        if (line[0] == CHAR_COMMENT) {                      // Skips comment lines beginning with "#"
+            command_num++;                                  // Each command is preceded by a "#" so we will go to the next command
+            syscall_num = 0;
+            next_line_is_name = true;                          
+            continue;
+        }
+
+        char *token = strtok(line, " ");
+        int counter = 0;
+
+        while (token != 0) {
+            token[strcspn(token, "\r\n")] = 0;
+
+            if (counter == 0) {
+                commands[command_num].syscall_array[syscall_num].exec_time = atoi(token);
+            }
+
+            if (counter == 1) {
+                strcpy(commands[command_num].syscall_array[syscall_num].name, token);
+            }
+
+            if (counter == 2) {
+                if (isdigit(token[0])) {
+                    commands[command_num].syscall_array[syscall_num].data_transfer = atoi(token);
+                    break;
+                }
+                else {
+                    strcpy(commands[command_num].syscall_array[syscall_num].io_device, token);
+                }
+            }
+
+            if (counter == 3) {
+                commands[command_num].syscall_array[syscall_num].data_transfer = atoi(token);
+            }
+
+            counter++;
+            token = strtok(0, " ");
+        }
+        syscall_num++;
+    }
+    command_num--;
+
+    for (int i = 0; i < 5; i++) {
+    printf("exec_time: %i\n", commands[i].syscall_array[0].exec_time);
+    printf("name: %s\n", commands[i].syscall_array[0].name);
+    printf("io_device: %s\n", commands[i].syscall_array[0].io_device);
+    printf("data_transfer: %i\n", commands[i].syscall_array[0].data_transfer);
+    }
+}
+
+//  ----------------------------------------------------------------------
+
+/*
+    Notes for Jared:
+        For the sleep syscall, the amount of time to sleep is held in the "data_transfer" element of the structure
+        This part will be much much harder :)
+*/
 
 void execute_commands(void)
 {
