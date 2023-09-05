@@ -39,8 +39,6 @@ int device_num = 0;
 int command_num = -1;
 int total_time = 0;
 
-// Define a structure to hold the devices, their speeds, then declare 4 of them
-// Define an array of device structures of length 4
 struct devices {
     char name[MAX_DEVICE_NAME];
     int r_speed;
@@ -49,17 +47,14 @@ struct devices {
 
 struct devices device_array[MAX_DEVICES];
 
-// Define a structure to hold syscalls
-// Define a structure to hold the commands, their speeds, then declare 10 of them
-// Within a single command struct, there is an array of syscall structs
-// Define an array of command structures of length 10
-
 struct syscalls {
     char name[100];
     int exec_time;
     char io_device[MAX_DEVICE_NAME];
     int data_transfer;
 };
+
+struct syscalls current_syscalls[MAX_SYSCALLS_PER_PROCESS];
 
 struct commands {
     char name[MAX_COMMAND_NAME];
@@ -71,10 +66,15 @@ struct commands command_array[MAX_COMMANDS];
 
 // Probably need a few global arrays for the queues
 
-struct commands RUNNING_queue[1]; 
-struct commands READY_queue[10]; 
-struct commands BLOCKED_queue[10]; 
-int quant_timer;
+struct processes {
+    char command_name[MAX_COMMAND_NAME];
+    int p_id;
+    int time_run;
+};
+
+struct processes RUNNING_queue[1];
+struct processes READY_queue[MAX_RUNNING_PROCESSES];
+struct processes BLOCKED_queue[MAX_RUNNING_PROCESSES];
 
 //  ----------------------------------------------------------------------
 
@@ -225,18 +225,7 @@ void read_commands(char filename[])
         For the spawn syscall, the process to be spawn is held in the "io_device" element of the structure
 */
 
-void sleep(int exec_time, int sleepy_time, int p_id) {
-    printf("@00000000%i\t going to sleep...\n", total_time);
-    total_time += 5;
-    BLOCKED_queue[0] = RUNNING_queue[0];
-}
-
-void enqueue(struct commands command[], int p_id) {
-    READY_queue[0] = *command;
-    printf("@00000000%i\t p_id%i NEW->READY\n", total_time, p_id);
-}
-
-void execute_ready(void) {
+/*void execute_ready(void) {
     int p_id = 0;
     printf("@00000000%i\t p_id%i READY->RUNNING\n", total_time, p_id);
     printf("@00000000%i\t clock +5\n", total_time);
@@ -249,19 +238,55 @@ void execute_ready(void) {
             sleep(RUNNING_queue[0].syscall_array[i].exec_time, RUNNING_queue[0].syscall_array[i].data_transfer, p_id);
         }
     }
+}*/
+
+void shift_ready_queue() {
+    for (int i = 0; i < MAX_COMMANDS; i++) {
+        READY_queue[i] = READY_queue[i+1];
+    }
+}
+
+int enqueue_running(int p_id, int total_time) {
+    printf("@%09d\t p_id%i READY->RUNNING\n", total_time, p_id);
+    RUNNING_queue[0] = READY_queue[0];
+    shift_ready_queue();
+
+    int time = 5;
+    printf("@%09d\t clock +%i\n", total_time, time);
+    return time + total_time;
+}
+
+void spawn_proc(int i, char command_name[], int p_id, int total_time) {
+    printf("@%09d\t p_id%i NEW->READY\n", total_time, p_id);
+    strcpy(READY_queue[i].command_name, command_name);
+    READY_queue[i].p_id = p_id;
+    READY_queue[i].time_run = 0;
+}
+
+void retrieve_syscalls(char command_name[]) {
+    for (int i = 0; i < MAX_COMMANDS; i++) {
+        if (strcmp(command_name, commands[i].name)) {
+            for (int j = 0; j < MAX_SYSCALLS_PER_PROCESS; j++) {
+                current_syscalls[j] = commands[i].syscall_array[j];
+            }
+        }
+    }
 }
 
 void execute_commands(void)
 {
-    int p_id = 0;
-    printf("@00000000%i\t REBOOTING\n", total_time);
+    int p_id = 0; int total_time = 0;
+    printf("@%09d\t REBOOTING\n", total_time);
 
-    for (int i = 0; i < command_num; i++) {
-        command_array[i].p_id = p_id;
-        enqueue(&command_array[i], p_id);               // Change this, to add p_id to the command struct instead of being separate
-        p_id++;
-    }
-    execute_ready();
+    // Spawn the first process into the ready queue
+    spawn_proc(0, commands[0].name, p_id, total_time);
+    // Move it to the running queue
+    total_time = enqueue_running(p_id, total_time);
+    
+    // EXECUTE ORDER 66 (while loop?)
+    int process_time = 0;
+    retrieve_syscalls(RUNNING_queue->command_name);
+
 }
 
 //  ----------------------------------------------------------------------
