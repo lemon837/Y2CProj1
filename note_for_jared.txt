@@ -1,0 +1,14 @@
+Note for Jared
+
+I've attached the command.txt file I was working with
+
+It's almost working with the sleep function, however:
+There's a shift_ready_queue(); call within the enqueue_ready_from_sleeping() function
+This just immediately deletes what was just put in the ready call - but without this line the code just doesn't work even harder
+This is the problem to fix :)
+
+Also, I changed the queue types from processes to just commands
+So now there's a few extra pieces of data held in the commands
+- p_id
+- time_evoked
+- some sleeping data

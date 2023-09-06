@@ -38,6 +38,7 @@ int time_quantum = 0;
 int device_num = 0;
 int command_num = -1;
 int total_time = 0;
+int p_id = 0;
 
 struct devices {
     char name[MAX_DEVICE_NAME];
@@ -52,6 +53,8 @@ struct syscalls {
     int exec_time;
     char io_device[MAX_DEVICE_NAME];
     int data_transfer;
+    int time_evoked;
+    bool completed;
 };
 
 struct syscalls current_syscalls[MAX_SYSCALLS_PER_PROCESS];
@@ -60,21 +63,18 @@ struct commands {
     char name[MAX_COMMAND_NAME];
     struct syscalls syscall_array[MAX_SYSCALLS_PER_PROCESS];
     int p_id;
+    int time_evoked;
+    int time_run;
 } commands[MAX_COMMANDS];
+
+struct commands empty_command;
 
 struct commands command_array[MAX_COMMANDS];
 
-// Probably need a few global arrays for the queues
-
-struct processes {
-    char command_name[MAX_COMMAND_NAME];
-    int p_id;
-    int time_run;
-};
-
-struct processes RUNNING_queue[1];
-struct processes READY_queue[MAX_RUNNING_PROCESSES];
-struct processes BLOCKED_queue[MAX_RUNNING_PROCESSES];
+struct commands RUNNING_queue[1];
+struct commands READY_queue[MAX_RUNNING_PROCESSES];
+struct commands BLOCKED_queue[MAX_RUNNING_PROCESSES];
+struct commands SLEEPING_queue[MAX_RUNNING_PROCESSES];
 
 //  ----------------------------------------------------------------------
 
@@ -231,14 +231,60 @@ void shift_ready_queue() {
     }
 }
 
-int enqueue_running(int p_id, int total_time) {
+void shift_sleeping_queue() {
+    for (int i = 0; i < MAX_COMMANDS; i++) {
+        SLEEPING_queue[i] = SLEEPING_queue[i+1];
+    }
+}
+
+void enqueue_ready_from_sleeping(int j) {
+    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+        if (strcmp(READY_queue[i].name, "") == 0) {
+            READY_queue[i] = SLEEPING_queue[j];
+            READY_queue[i].syscall_array[0].completed = true;
+            SLEEPING_queue[j] = empty_command;
+            break;
+        }
+    }
+    printf("@%09d\t clock +10\n", total_time);
+    total_time += 10;
+    shift_ready_queue();
+    shift_sleeping_queue();
+}
+
+void enqueue_blocked(int sleep_time) {
+    // Find the next free spot at the end of the blocked queue, put RUNNING there
+    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+        if (strcmp(BLOCKED_queue[i].name, "") == 0) {
+            BLOCKED_queue[i] = RUNNING_queue[0];
+            break;
+        }
+    }
+    printf("@%09d\t clock +10\n", total_time);
+    total_time += 10;
+    RUNNING_queue[0] = empty_command;
+}
+
+void enqueue_sleeping() {
+    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+        if (strcmp(SLEEPING_queue[i].name, "") == 0) {
+            SLEEPING_queue[i] = RUNNING_queue[0];
+            SLEEPING_queue[i].syscall_array[0].time_evoked = total_time;
+            break;
+        }
+    }
+    printf("@%09d\t clock +10\n", total_time);
+    total_time += 10;
+    RUNNING_queue[0] = empty_command;
+}
+
+int enqueue_running() {
     // Check if the ready queue has anything in it
     // If it does then queue the next item into running
-    if (strcmp(READY_queue[0].command_name, "") != 0) {
+    if (strcmp(READY_queue[0].name, "") != 0) {
         RUNNING_queue[0] = READY_queue[0];
-        printf("@%09d\t p_id%i READY->RUNNING\n", total_time, p_id);
+        printf("@%09d\t p_id%i READY->RUNNING\n", total_time, RUNNING_queue[0].p_id);
         shift_ready_queue();
-
         int time = 5;
         printf("@%09d\t clock +%i\n", total_time, time);
         return time + total_time;
@@ -246,73 +292,82 @@ int enqueue_running(int p_id, int total_time) {
     return total_time;
 }
 
-void enqueue_ready(int p_id) {
-
-}
-
-void spawn_proc(int i, char command_name[], int p_id, int total_time) {
+void spawn_proc(int i, char command_name[]) {
+    READY_queue[0] = command_array[i];
+    READY_queue[0].p_id = p_id;
     printf("@%09d\t p_id%i NEW->READY\n", total_time, p_id);
-    strcpy(READY_queue[i].command_name, command_name);
-    READY_queue[i].p_id = p_id;
-    READY_queue[i].time_run = 0;
-}
-
-void retrieve_syscalls(char command_name[]) {
-    for (int i = 0; i < MAX_COMMANDS; i++) {
-        if (strcmp(command_name, commands[i].name) == 0) {
-            for (int j = 0; j < MAX_SYSCALLS_PER_PROCESS; j++) {
-                current_syscalls[j] = commands[i].syscall_array[j];
-            }
-        }
-    }
+    p_id++;
 }
 
 void execute_commands(void)
 {
-    int p_id = 0;
     printf("@%09d\t REBOOTING\n", total_time);
+    // Spawns first process into the ready queue, com_run tells the program that commands[0] has been spawned, so [1] is next
+    spawn_proc(0, commands[0].name);
+    total_time = enqueue_running();
+    int com_run = 0;
+    com_run++;
 
-    // Spawn just the first process into the ready queue
-    spawn_proc(0, commands[0].name, p_id, total_time);
-    // Move it to the running queue
-    total_time = enqueue_running(p_id, total_time);
-
-    while (total_time < 200) {
-        retrieve_syscalls(RUNNING_queue->command_name);
-        
-        // TODO: Check if there are commands not run from the file, then execute the next one in the list
-        // If there are no processes ready or runing AND no commands left in the file - then terminate
-        if (strcmp(RUNNING_queue[0].command_name, "") == 0 && strcmp(READY_queue[0].command_name, "") == 0) {
-            printf("@%09d\t no processes remaining - exiting\n", total_time);
-            goto tag;
+    while (total_time < 20000000) {
+         // If the running queue is empty and it hasnt replaced itself, move to the next command in the file
+        if (strcmp(RUNNING_queue[0].name, "") == 0 && com_run < command_num) {
+            spawn_proc(com_run, commands[com_run].name);
+            total_time = enqueue_running();
+            com_run++;
+            goto endloop;
         }
-        
+
+        // If there are no processes ready, running or blocked - terminate
+        if (strcmp(RUNNING_queue[0].name, "") == 0 && strcmp(READY_queue[0].name, "") == 0) {
+            if (strcmp(SLEEPING_queue[0].name, "") == 0) {
+                printf("@%09d\t no processes remaining - exiting\n", total_time);
+                goto terminate;
+            }
+            // Else, there's something sleeping and waiting
+            // Increment and check sleepers
+            for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+                if (strcmp(SLEEPING_queue[i].name, "") != 0 && SLEEPING_queue[i].syscall_array[0].data_transfer <= total_time - SLEEPING_queue[i].syscall_array[0].time_evoked) {
+                    printf("@%09d\t p_id(%i) BLOCKED->READY\n", total_time, SLEEPING_queue[i].p_id);
+                    enqueue_ready_from_sleeping(i);
+                    goto endloop;
+                }
+            }
+            goto endloop;
+        }
+
         // Wait for the syscall's exec time - then do what it asks
-        if (RUNNING_queue->time_run == current_syscalls[0].exec_time) {
-            // Check what the command is: spawn, read, write, wait, exit
-            if (strcmp(current_syscalls[0].name, "exit") == 0) {
-                printf("@%09d\t p_id(%i) RUNNING->EXIT\n", total_time, p_id);
-                p_id++;
-                enqueue_running(p_id, total_time);
-                break;
+        if (RUNNING_queue[0].time_run == RUNNING_queue[0].syscall_array[0].exec_time) {
+            // Check what the command is: spawn, read, write, wait, exit, sleep
+            for (int i = 0; i < MAX_SYSCALLS_PER_PROCESS; i++) {
+                if (strcmp(RUNNING_queue[0].syscall_array[i].name, "exit") == 0 && RUNNING_queue[0].syscall_array[i].completed == false) {
+                    printf("@%09d\t p_id(%i) RUNNING->EXIT\n", total_time, RUNNING_queue[0].p_id);
+                    strcpy(RUNNING_queue[0].name, "");
+                    goto endloop;
+                }
+
+                if (strcmp(RUNNING_queue[0].syscall_array[0].name, "sleep") == 0 && RUNNING_queue[0].syscall_array[i].completed == false) {
+                    printf("@%09d\t p_id(%i) RUNNING->BLOCKED\n", total_time, RUNNING_queue[0].p_id);
+                    enqueue_sleeping();
+                    goto endloop;
+                }
             }
         }
 
         // Continue looping, adding time to the current processes time run
-        if (RUNNING_queue->time_run < time_quantum) {
-            printf("@%09d\t running process_id(%i)\n", total_time, p_id);
+        if (RUNNING_queue[0].time_run < time_quantum) {
+            printf("@%09d\t running p_id(%i)\n", total_time, RUNNING_queue[0].p_id);
             RUNNING_queue->time_run++;
         }
 
         // If process reaches time quantum - move it back to the ready queue
-        if (RUNNING_queue->time_run >= time_quantum) {
-            printf("@%09d\t tq expired - moving p_id(%i) RUNNING->READY\n", total_time, p_id);
-            //enqueue_ready(int p_id);
+        if (RUNNING_queue[0].time_run >= time_quantum) {
+            printf("@%09d\t tq expired - moving p_id(%i) RUNNING->READY\n", total_time, RUNNING_queue[0].p_id);
+            //TO DO: enqueue_ready_from_running();
         }
-
+        endloop:;
         total_time++;
     }
-    tag:;
+    terminate:;
 }
 
 //  ----------------------------------------------------------------------
