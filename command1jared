@@ -1,8 +1,0 @@
-#
-shortsleep
-    10usecs    sleep   1000000usecs
-    50usecs    exit
-#
-longsleep
-    10usecs    sleep   5000000usecs
-    50usecs    exit
