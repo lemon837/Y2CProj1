@@ -3,6 +3,20 @@
 #include <ctype.h>
 #include <string.h>
 #include <stdbool.h>
+#include <math.h>
+
+/*
+    Notes:
+        For the sleep syscall, the amount of time to sleep is held in the "data_transfer" element of the structure
+        For the spawn syscall, the process to be spawn is held in the "io_device" element of the structure
+
+    TODO:
+        Create a function that scans the blocked queue for the highest I/O speed, currently it just
+        takes the first element
+
+        Add functionality for multiple parents in the wait queue
+
+*/
 
 //  CITS2002 Project 1 2023
 //  Student1:   22976862    Frederick Leman
@@ -42,8 +56,8 @@ int p_id = 0;
 
 struct devices {
     char name[MAX_DEVICE_NAME];
-    int r_speed;
-    int w_speed;
+    float r_speed;
+    float w_speed;
 } devices[MAX_DEVICES];
 
 struct devices device_array[MAX_DEVICES];
@@ -66,18 +80,20 @@ struct commands {
     char name[MAX_COMMAND_NAME];
     struct syscalls syscall_array[MAX_SYSCALLS_PER_PROCESS];
     int p_id;
-    int time_evoked;
     int time_run;
+    int child;
 } commands[MAX_COMMANDS];
 
 struct commands empty_command;
-
 struct commands command_array[MAX_COMMANDS];
 
 struct commands RUNNING_queue[1];
 struct commands READY_queue[MAX_RUNNING_PROCESSES];
 struct commands BLOCKED_queue[MAX_RUNNING_PROCESSES];
 struct commands SLEEPING_queue[MAX_RUNNING_PROCESSES];
+struct commands WAIT_queue[MAX_RUNNING_PROCESSES];
+
+int completed_processes[MAX_RUNNING_PROCESSES];
 
 //  ----------------------------------------------------------------------
 
@@ -108,11 +124,11 @@ void read_sysconfig(char filename[])
                 }
 
                 if (counter == 2) {
-                    devices[device_num].r_speed = atoi(token) / 1000000;
+                    devices[device_num].r_speed = atof(token);
                 }
 
                 if (counter == 3) {
-                    devices[device_num].w_speed = atoi(token) / 1000000;
+                    devices[device_num].w_speed = atof(token);
                 }
 
                 counter++;
@@ -135,8 +151,8 @@ void read_sysconfig(char filename[])
     printf("Devices Found: %i\n", device_num);
     /*for (int i = 0; i < 4; i++) {                           // To test the function, print all the sysconfig variables
         printf("Name: %s ", devices[i].name);
-        printf("R: %d ", devices[i].r_speed);
-        printf("W: %d\n", devices[i].w_speed);
+        printf("R: %f ", devices[i].r_speed);
+        printf("W: %f\n", devices[i].w_speed);
     }*/
     printf("Time Quantum: %d\n", time_quantum);
 }
@@ -220,8 +236,8 @@ void read_commands(char filename[])
         }
     }
 
-    /*printf("Commands Found: %i\n", command_num);
-    for (int i = 0; i < 5; i++) {
+    printf("Commands Found: %i\n", command_num);
+    /*for (int i = 0; i < 1; i++) {
         printf("\nCommand Name: %s\n", command_array[i].name);
         for (int j = 0; j < 5; j++) {                                                   // CHANGE THIS J VALUE EVENTUALLY!
             printf("exec_time: %i ", command_array[i].syscall_array[j].exec_time);
@@ -233,12 +249,6 @@ void read_commands(char filename[])
 }
 
 //  ----------------------------------------------------------------------
-
-/*
-    Notes:
-        For the sleep syscall, the amount of time to sleep is held in the "data_transfer" element of the structure
-        For the spawn syscall, the process to be spawn is held in the "io_device" element of the structure
-*/
 
 void print_running_queue() {
     printf("PID: %i ", RUNNING_queue[0].p_id);
@@ -268,7 +278,62 @@ void shift_sleeping_queue() {
     for (int i = 0; i < MAX_COMMANDS; i++) {
         SLEEPING_queue[i] = SLEEPING_queue[i+1];
     }
-    SLEEPING_queue[MAX_COMMANDS -1] = empty_command;
+    SLEEPING_queue[MAX_COMMANDS - 1] = empty_command;
+}
+
+void shift_blocked_queue() {
+    for (int i = 0; i < MAX_COMMANDS; i++) {
+        BLOCKED_queue[i] = BLOCKED_queue[i+1];
+    }
+    BLOCKED_queue[MAX_COMMANDS - 1] = empty_command;
+}
+
+void shift_wait_queue() {
+    for (int i = 0; i < MAX_COMMANDS; i++) {
+        WAIT_queue[i] = WAIT_queue[i+1];
+    }
+    WAIT_queue[MAX_COMMANDS - 1] = empty_command;
+}
+
+void enqueue_waiting() {
+    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+        if (strcmp(WAIT_queue[i].name, "") == 0) {
+            WAIT_queue[i] = RUNNING_queue[0];
+            RUNNING_queue[0] = empty_command;
+            break;
+        }
+    }
+}
+
+void enqueue_ready_from_waiting() {
+    printf("@%09d\t p_id(%i) WAITING->READY\n", total_time, WAIT_queue[0].p_id);
+    printf("@%09d\t clock +10\n", total_time);
+    total_time += 10;
+
+    int i = 0;
+    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+        if (strcmp(READY_queue[i].name, "") == 0) {
+            READY_queue[i] = WAIT_queue[0];
+            WAIT_queue[0] = empty_command;
+            break;
+        }
+    }
+    shift_wait_queue();
+}
+
+void enqueue_ready_from_blocked() {
+    int i = 0;
+    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+        if (strcmp(READY_queue[i].name, "") == 0) {
+            READY_queue[i] = BLOCKED_queue[0];
+            BLOCKED_queue[0] = empty_command;
+            break;
+        }
+    }
+    printf("@%09d\t p_id%i BLOCKED->READY\n", total_time, READY_queue[i].p_id);
+    printf("@%09d\t clock +10\n", total_time);
+    total_time += 10;
+    shift_blocked_queue();
 }
 
 void enqueue_ready_from_sleeping(int j) {
@@ -298,7 +363,7 @@ void enqueue_ready_from_running() {
     total_time += 10;
 }
 
-void enqueue_blocked(int sleep_time) {
+void enqueue_blocked() {
     // Find the next free spot at the end of the blocked queue, put RUNNING there
     for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
         if (strcmp(BLOCKED_queue[i].name, "") == 0) {
@@ -342,55 +407,100 @@ void enqueue_running() {
     }
 }
 
-void spawn_proc(int i, char command_name[]) {
+void running_read(int i) {
+    for (int j = 0; j < MAX_DEVICES; j++) {
+        if (strcmp(RUNNING_queue[0].syscall_array[i].io_device, device_array[j].name) == 0) {
+            float time_max = RUNNING_queue[0].syscall_array[i].data_transfer*1.0 / (device_array[j].r_speed / 1000000.0);
+            RUNNING_queue[0].syscall_array[i].rw_time_max = roundf(time_max);
+            printf("\n BEGINNING READ PROCESS \t MAX: %2.6f\n", time_max);
+            break;
+        }
+    }
+}
+
+void running_write(int i) {
+    for (int j = 0; j < MAX_DEVICES; j++) {
+        if (strcmp(RUNNING_queue[0].syscall_array[i].io_device, device_array[j].name) == 0) {
+            float time_max = RUNNING_queue[0].syscall_array[i].data_transfer*1.0 / (device_array[j].w_speed / 1000000.0);
+            RUNNING_queue[0].syscall_array[i].rw_time_max = roundf(time_max);
+            printf("\n BEGINNING WRITE PROCESS \t MAX: %2.6f\n", time_max);
+            break;
+        }
+    }
+}
+
+void spawn_child(int x) {
+    int child_id = p_id;
+    printf("\nCHILD ID: %i\n", child_id);
+    p_id++;
+    int y;
+    for (int y = 0; y < MAX_COMMANDS; y++) {
+        if (strcmp(RUNNING_queue[0].syscall_array[x].io_device, command_array[y].name) == 0) {
+            break;
+        }
+    }
+    // WHEN IT SPAWNS A CHILD IT GOES TO READY NOT WAITING THEN ASSIGN THE CHILD ID!!!
+    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+        if (strcmp(WAIT_queue[i].name, "") == 0) {
+            WAIT_queue[i].child = child_id;
+            break;
+        }
+    }
+    enqueue_ready_from_running();
+    RUNNING_queue[0] = command_array[y];
+    RUNNING_queue[0].p_id = child_id;
+}
+
+void spawn_first_proc(int i, char command_name[]) {
     READY_queue[0] = command_array[i];
     READY_queue[0].p_id = p_id;
     printf("@%09d\t p_id%i NEW->READY\n", total_time, p_id);
     p_id++;
 }
 
-void running_read(int i) {
-    for (int j = 0; j < MAX_DEVICES; j++) {
-        if (strcmp(RUNNING_queue[0].syscall_array[i].io_device, device_array[j].name) == 0) {
-            RUNNING_queue[0].syscall_array[i].rw_time_max = RUNNING_queue[0].syscall_array[i].data_transfer / device_array[j].r_speed;
+void complete_process() {
+    for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+        if (completed_processes[i] == 0) {
+            completed_processes[i] = RUNNING_queue[0].p_id;
+            break;
         }
     }
 }
 
-void running_write(int i){
-    for (int j = 0; j < MAX_DEVICES; j++) {
-        if (strcmp(RUNNING_queue[0].syscall_array[i].io_device, device_array[j].name) == 0) {
-            RUNNING_queue[0].syscall_array[i].rw_time_max = RUNNING_queue[0].syscall_array[i].data_transfer / device_array[j].w_speed;
+void check_children() {
+    for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+        if (completed_processes[i] == WAIT_queue[0].child) {
+            printf("\n\n completed processes: %i %i\n", completed_processes[0], completed_processes[1]);
+            printf("\n\n child: %i\n\n", WAIT_queue[0].child);
+            enqueue_ready_from_waiting();
+            break;
         }
     }
 }
+
+//  ----------------------------------------------------------------------
 
 void execute_commands(void) {
     printf("@%09d\t REBOOTING\n", total_time);
-    spawn_proc(0, commands[0].name);
+    spawn_first_proc(0, commands[0].name);
     enqueue_running();
     int com_run = 0;
     com_run++;
 
     // empty_command.time_run = 100000000;
     bool should_terminate = false;
-    int got_here;
 
     while (total_time < 10000000 && !should_terminate) {
+        int current = 0;
 
-        // If running queue is empty and commands remain in file
-        if (strcmp(RUNNING_queue[0].name, "") == 0 && com_run < command_num) {
-            spawn_proc(com_run, commands[com_run].name);
-            enqueue_running();
-            com_run++;
-        }
-        
         if (strcmp(RUNNING_queue[0].name, "") == 0) {
             if (strcmp(READY_queue[0].name, "") == 0) {
-                if (strcmp(SLEEPING_queue[0].name, "") == 0) {
+                // If all queues are empty, exit with no processes remaining
+                if (strcmp(SLEEPING_queue[0].name, "") == 0 && strcmp(BLOCKED_queue[0].name, "") == 0 && strcmp(WAIT_queue[0].name, "") == 0) {
                     printf("@%09d\t no processes remaining - exiting\n", total_time);
                     should_terminate = true;
                 }
+                // Otherwise check sleeping queue and blocked queue, and append one to ready if required
                 else {
                     for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
                         if (strcmp(SLEEPING_queue[i].name, "") != 0 && SLEEPING_queue[i].syscall_array[0].data_transfer <= total_time - SLEEPING_queue[i].syscall_array[0].time_evoked) {
@@ -399,8 +509,15 @@ void execute_commands(void) {
                             enqueue_running();
                         }
                     }
+                    if (strcmp(BLOCKED_queue[0].name, "") != 0) {
+                        enqueue_ready_from_blocked();
+                    }
+                    if (strcmp(WAIT_queue[0].name, "") != 0) {
+                        check_children();
+                    }
                 }
             }
+            // Otherwise, run the next ready process
             else {
                 enqueue_running();
             }
@@ -410,60 +527,86 @@ void execute_commands(void) {
         if (strcmp(RUNNING_queue[0].name, "") != 0) {
             for (int i = 0; i < MAX_SYSCALLS_PER_PROCESS; i++) {
                 if (!RUNNING_queue[0].syscall_array[i].completed) {
-                    if (RUNNING_queue[0].syscall_array[i].time_evoking >= RUNNING_queue[0].syscall_array[i].exec_time) {
-                        if (strcmp(RUNNING_queue[0].syscall_array[i].name, "exit") == 0) {
+                    current = i;
+                    if (RUNNING_queue[0].syscall_array[current].time_evoking == RUNNING_queue[0].syscall_array[current].exec_time) {
+                        if (strcmp(RUNNING_queue[0].syscall_array[current].name, "exit") == 0) {
                             printf("@%09d\t p_id(%i) RUNNING->EXIT\n", total_time, RUNNING_queue[0].p_id);
+                            complete_process();
                             RUNNING_queue[0] = empty_command;
-                            break; // Exit the loop after handling the exit syscall
-                        }
-                        else if (strcmp(RUNNING_queue[0].syscall_array[i].name, "sleep") == 0) {
-                            printf("@%09d\t p_id(%i) RUNNING->BLOCKED\n", total_time, RUNNING_queue[0].p_id);
-                            enqueue_sleeping();
-                            break; // Exit the loop after handling the sleep syscall
-                        }
-                        else if (strcmp(RUNNING_queue[0].syscall_array[i].name, "read") == 0) {
-                            running_read(i); // this is aids
-                            got_here = 5;
                             break;
                         }
-                        else if (strcmp(RUNNING_queue[0].syscall_array[i].name, "write") == 0) {
-                            running_write(i);
+                        else if (strcmp(RUNNING_queue[0].syscall_array[current].name, "sleep") == 0) {
+                            printf("@%09d\t p_id(%i) RUNNING->BLOCKED\n", total_time, RUNNING_queue[0].p_id);
+                            enqueue_sleeping();
+                            break;
+                        }
+                        else if (strcmp(RUNNING_queue[0].syscall_array[current].name, "read") == 0) {
+                            running_read(current);
+                            RUNNING_queue[0].syscall_array[current].time_evoking++;
+                            break;
+                        }
+                        else if (strcmp(RUNNING_queue[0].syscall_array[current].name, "write") == 0) {
+                            printf("@%09d\t FIRST TIME ACQUIRING DATA BUS clock +20\n", total_time);
+                            total_time += 20;
+                            running_write(current);
+                            RUNNING_queue[0].syscall_array[current].time_evoking++;
+                            break;
+                        }
+                        else if (strcmp(RUNNING_queue[0].syscall_array[current].name, "spawn") == 0) {
+                            printf("@%09d\t p_id(%i) SPAWNING A CHILD\n", total_time, RUNNING_queue[0].p_id);
+                            RUNNING_queue[0].syscall_array[current].completed = true;
+                            spawn_child(current);
+                            RUNNING_queue[0].syscall_array[current].time_evoking++;
+                            break;
+                        }
+                        else if (strcmp(RUNNING_queue[0].syscall_array[current].name, "wait") == 0) {
+                            printf("@%09d\t p_id(%i) RUNNING->WAIT\n", total_time, RUNNING_queue[0].p_id);
+                            RUNNING_queue[0].syscall_array[current].completed = true;
+                            enqueue_waiting();
                             break;
                         }
                     }
                     else {
                         // The syscall has not run out it's execution time
-                        RUNNING_queue[0].syscall_array[i].time_evoking++;
+                        RUNNING_queue[0].syscall_array[current].time_evoking++;
                         break;
                     }
                 }
             }
         }
-        
+
+        // If the running process has not exceeded the time quantum, let it run for one more usec
         if (RUNNING_queue[0].time_run < time_quantum && strcmp(RUNNING_queue[0].name, "") != 0 ) {
-            // printf("@%09d\t running p_id(%i)\n", total_time, RUNNING_queue[0].p_id);
             RUNNING_queue[0].time_run++;
             for (int i = 0; i < MAX_SYSCALLS_PER_PROCESS; i++) {
                 if (!RUNNING_queue[0].syscall_array[i].completed && RUNNING_queue[0].syscall_array[i].rw_time_max != 0) {
-                    printf("current: %i\t max: %i\n", RUNNING_queue[0].syscall_array[i].rw_time_current, RUNNING_queue[0].syscall_array[i].rw_time_max);
                     if (RUNNING_queue[0].syscall_array[i].rw_time_current < RUNNING_queue[0].syscall_array[i].rw_time_max) {
                         RUNNING_queue[0].syscall_array[i].rw_time_current++;
+                        if (RUNNING_queue[0].time_run >= time_quantum) {
+                            printf("@%09d\t tq expired for I/O - moving p_id(%i) RUNNING->BLOCKED\n", total_time, RUNNING_queue[0].p_id);
+                            enqueue_blocked();
+                        }
                     }
                     else {
-                        got_here = 5;
+                        printf("\n\n FINISHED READ/WRITE\n CURRENT: %i\t MAX: %i\n\n", RUNNING_queue[0].syscall_array[i].rw_time_current, RUNNING_queue[0].syscall_array[i].rw_time_max);
                         RUNNING_queue[0].syscall_array[i].completed = true;
                     }
                 }
             }
         }
 
+        // If the running process has exceeded the time quantum, append it to the ready queue
         if (RUNNING_queue[0].time_run >= time_quantum && strcmp(RUNNING_queue[0].name, "") != 0 ) {
             printf("@%09d\t tq expired - moving p_id(%i) RUNNING->READY\n", total_time, RUNNING_queue[0].p_id);
             enqueue_ready_from_running();
         }
-        total_time++;
+    total_time++;
     }
-    printf("\n%i\n", got_here);
+    printf("running: %s\n", RUNNING_queue[0].name);
+    printf("ready: %s\n", READY_queue[0].name);
+    printf("blocked: %s\n", BLOCKED_queue[0].name);
+    printf("wait: %s\n", WAIT_queue[0].name);
+    printf("sleeping: %s\n", SLEEPING_queue[0].name);
 }
 
 //  ----------------------------------------------------------------------
