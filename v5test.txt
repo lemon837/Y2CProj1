@@ -1,0 +1,10 @@
+# 
+shell
+    10usecs  spawn  shortsleep
+    20usecs  wait
+    40usecs  exit
+#
+shortsleep
+    10usecs  sleep 1000usecs
+    50usecs  exit
+#
