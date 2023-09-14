@@ -30,8 +30,9 @@
 #define CHAR_SYSCALL                            '\t'
 
 int time_quantum = 0;
+int device_num = 0;
+int command_num = -1;
 int total_time = 0;
-int cpu_utilisation = 0;
 int p_id = 0;
 
 struct devices {
@@ -39,6 +40,7 @@ struct devices {
     int r_speed;
     int w_speed;
 } devices[MAX_DEVICES];
+
 struct devices device_array[MAX_DEVICES];
 
 struct syscalls {
@@ -53,6 +55,9 @@ struct syscalls {
     int rw_time_max;
     bool completed;
 };
+
+struct syscalls current_syscalls[MAX_SYSCALLS_PER_PROCESS];
+
 struct commands {
     char name[MAX_COMMAND_NAME];
     struct syscalls syscall_array[MAX_SYSCALLS_PER_PROCESS];
@@ -65,6 +70,7 @@ struct commands {
 
 struct commands empty_command;
 struct commands command_array[MAX_COMMANDS];
+
 struct commands RUNNING_queue[1];
 struct commands READY_queue[MAX_RUNNING_PROCESSES];
 struct commands BLOCKED_queue[MAX_RUNNING_PROCESSES];
@@ -72,43 +78,53 @@ struct commands SLEEPING_queue[MAX_RUNNING_PROCESSES];
 struct commands WAIT_queue[MAX_RUNNING_PROCESSES];
 
 int completed_processes[MAX_RUNNING_PROCESSES];
+int cpu_utilisation = 0;
 
 //  ----------------------------------------------------------------------
 
 void read_sysconfig(char filename[])
 {
-    int device_num = 0;
-    char line[128];
-
     FILE *file = fopen(filename, "r");                      // Opens the sysconfig file
     if (file == NULL) {
         printf("There was an error in opening the sysconfigfile\n");
         exit(EXIT_FAILURE);
     }
+    
+    char line[128];
+
     while(fgets(line, sizeof line, file) != NULL) {
         if (line[0] == CHAR_COMMENT) {                      // Skips comment lines beginning with "#"
             continue;
         }
+
         if (line[0] == CHAR_DEVICE) {                       // Identifies device lines beginning with "d"
             char *token = strtok(line, " ");                // Generates the first token
             int counter = 0;
+
             while (token != 0) {
                 token[strcspn(token, "\r\n")] = 0;          // Remove newline characters
+
                 if (counter == 1) {
                     strcpy(devices[device_num].name, token);
                 }
+
                 if (counter == 2) {
                     devices[device_num].r_speed = atoi(token);
                 }
+
                 if (counter == 3) {
                     devices[device_num].w_speed = atoi(token);
                 }
+
                 counter++;
                 token = strtok(0, " ");                     // Gets the next token in the line
             }
+
         device_num++;
         }
+
         if (line[0] == CHAR_TIME_QUANTUM) {
+            char *token = strtok(line, " ");                // Creates a token of the time quantum line
             time_quantum = atoi(strtok(0, " "));
         }
     }
@@ -138,7 +154,6 @@ void read_commands(char filename[])
     
     char line[128];
     int syscall_num = 0;
-    int command_num = -1;
     bool next_line_is_name = false;
 
     while(fgets(line, sizeof line, file) != NULL) {
