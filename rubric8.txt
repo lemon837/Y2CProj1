@@ -1,0 +1,21 @@
+#
+eighth
+       20usecs    spawn     cal
+       40usecs    spawn     cal2
+       50usecs    spawn     cal3
+       60usecs    wait
+       80usecs    write     hd        240000B
+       90usecs    exit
+#
+cal
+       20usecs     write    ssd       480000B
+       40usecs     exit
+#
+cal2
+       20usecs     write    usb3.1    480000B
+       40usecs     exit
+#
+cal3
+       20usecs     write    hd        480000B
+       40usecs     exit
+#
