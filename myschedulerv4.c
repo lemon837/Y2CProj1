@@ -8,7 +8,6 @@
 //  CITS2002 Project 1 2023
 //  Student1:   22976862    Frederick Leman
 //  Student2:   22987324    Jared Teo
-
 //  myscheduler (v1.0)
 //  Compile with:  cc -std=c11 -Wall -Werror -o myscheduler myscheduler.c
 
@@ -22,25 +21,16 @@
 #define TIME_CONTEXT_SWITCH             5
 #define TIME_CORE_STATE_TRANSITIONS     10
 #define TIME_ACQUIRE_BUS                20
-
-// Some definitions for expected starting characters of various lines in the files
-#define CHAR_COMMENT                             '#'
-#define CHAR_DEVICE                              'd'
-#define CHAR_TIME_QUANTUM                        't'
-#define CHAR_SYSCALL                            '\t'
-
-int time_quantum = 0;
-int device_num = 0;
-int command_num = -1;
-int total_time = 0;
-int p_id = 0;
+#define CHAR_COMMENT                    '#'
+#define CHAR_DEVICE                     'd'
+#define CHAR_TIME_QUANTUM               't'
+#define CHAR_SYSCALL                    '\t'
 
 struct devices {
     char name[MAX_DEVICE_NAME];
     int r_speed;
     int w_speed;
 } devices[MAX_DEVICES];
-
 struct devices device_array[MAX_DEVICES];
 
 struct syscalls {
@@ -55,7 +45,6 @@ struct syscalls {
     int rw_time_max;
     bool completed;
 };
-
 struct syscalls current_syscalls[MAX_SYSCALLS_PER_PROCESS];
 
 struct commands {
@@ -67,9 +56,9 @@ struct commands {
     int num_children;
     int time_blocked;
 } commands[MAX_COMMANDS];
-
 struct commands empty_command;
 struct commands command_array[MAX_COMMANDS];
+int completed_processes[MAX_RUNNING_PROCESSES];
 
 struct commands RUNNING_queue[1];
 struct commands READY_queue[MAX_RUNNING_PROCESSES];
@@ -77,54 +66,56 @@ struct commands BLOCKED_queue[MAX_RUNNING_PROCESSES];
 struct commands SLEEPING_queue[MAX_RUNNING_PROCESSES];
 struct commands WAIT_queue[MAX_RUNNING_PROCESSES];
 
-int completed_processes[MAX_RUNNING_PROCESSES];
+int time_quantum = 100;
+int total_time = 0;
 int cpu_utilisation = 0;
+int p_id = 0;
 
 //  ----------------------------------------------------------------------
 
 void read_sysconfig(char filename[])
 {
+    int device_num = 0;
+    char line[128];
+
     FILE *file = fopen(filename, "r");                      // Opens the sysconfig file
     if (file == NULL) {
         printf("There was an error in opening the sysconfigfile\n");
         exit(EXIT_FAILURE);
     }
-    
-    char line[128];
-
     while(fgets(line, sizeof line, file) != NULL) {
         if (line[0] == CHAR_COMMENT) {                      // Skips comment lines beginning with "#"
             continue;
         }
-
         if (line[0] == CHAR_DEVICE) {                       // Identifies device lines beginning with "d"
             char *token = strtok(line, " ");                // Generates the first token
             int counter = 0;
-
             while (token != 0) {
                 token[strcspn(token, "\r\n")] = 0;          // Remove newline characters
-
                 if (counter == 1) {
                     strcpy(devices[device_num].name, token);
                 }
-
                 if (counter == 2) {
                     devices[device_num].r_speed = atoi(token);
                 }
-
                 if (counter == 3) {
                     devices[device_num].w_speed = atoi(token);
                 }
-
                 counter++;
                 token = strtok(0, " ");                     // Gets the next token in the line
             }
-
         device_num++;
         }
-
         if (line[0] == CHAR_TIME_QUANTUM) {
-            time_quantum = atoi(strtok(line, " "));                
+            char *token = strtok(line, " ");                
+            int counter = 0;
+            while (token != 0) {
+                token[strcspn(token, "\r\n")] = 0;          
+                if (counter == 1) {
+                    time_quantum = atoi(token);
+                }
+                token = strtok(0, " ");
+            }
         }
     }
 
@@ -133,11 +124,11 @@ void read_sysconfig(char filename[])
     }
 
     printf("Devices Found: %i\n", device_num);
-    /*for (int i = 0; i < 4; i++) {                           // To test the function, print all the sysconfig variables
+    for (int i = 0; i < 4; i++) {                           // To test the function, print all the sysconfig variables
         printf("Name: %s ", devices[i].name);
         printf("R: %i ", devices[i].r_speed);
         printf("W: %i\n", devices[i].w_speed);
-    }*/
+    }
     printf("Time Quantum: %d\n", time_quantum);
 }
 
@@ -145,16 +136,16 @@ void read_sysconfig(char filename[])
 
 void read_commands(char filename[])
 {
+    int command_num = -1;
+    char line[128];
+    int syscall_num = 0;
+    bool next_line_is_name = false;
+
     FILE *file = fopen(filename, "r");                      // Opens the command file
     if (file == NULL) {
         printf("There was an error in opening the command file");
         exit(EXIT_FAILURE);
     }
-    
-    char line[128];
-    int syscall_num = 0;
-    bool next_line_is_name = false;
-
     while(fgets(line, sizeof line, file) != NULL) {
 
         if (next_line_is_name == true) {                                        // If this line was preceded by a "#" line, it is the name of the next command 
@@ -246,7 +237,6 @@ void shift_ready_queue() {
         READY_queue[i] = READY_queue[i+1];
     }
     READY_queue[MAX_COMMANDS - 1] = empty_command;
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void shift_wait_queue() {
@@ -254,7 +244,6 @@ void shift_wait_queue() {
         WAIT_queue[i] = WAIT_queue[i+1];
     }
     WAIT_queue[MAX_COMMANDS - 1] = empty_command;
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void enqueue_waiting() {
@@ -265,7 +254,6 @@ void enqueue_waiting() {
             break;
         }
     }
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void enqueue_ready_from_waiting() {
@@ -281,7 +269,6 @@ void enqueue_ready_from_waiting() {
         }
     }
     shift_wait_queue();
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void enqueue_ready_from_blocked() {
@@ -324,7 +311,6 @@ void enqueue_ready_from_blocked() {
         BLOCKED_queue[i] = BLOCKED_queue[i+1];
     }
     BLOCKED_queue[MAX_COMMANDS - 1] = empty_command;
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void enqueue_ready_from_sleeping(int x, int y) {
@@ -340,7 +326,6 @@ void enqueue_ready_from_sleeping(int x, int y) {
     }
     printf("@%09d\t clock +10\n", total_time);
     total_time += TIME_CORE_STATE_TRANSITIONS;
-    printf("UT:%i\n", cpu_utilisation);
 
     // Shuffle sleeping queue
     for (int i = empty_space; i < MAX_COMMANDS - empty_space; i++) {
@@ -359,7 +344,6 @@ void enqueue_ready_from_running() {
     }
     printf("@%09d\t clock +10\n", total_time);
     total_time += TIME_CORE_STATE_TRANSITIONS;
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void enqueue_blocked() {
@@ -374,7 +358,6 @@ void enqueue_blocked() {
     printf("@%09d\t clock +10\n", total_time);
     total_time += TIME_CORE_STATE_TRANSITIONS;
     RUNNING_queue[0] = empty_command;
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void enqueue_sleeping(int j) {
@@ -388,7 +371,6 @@ void enqueue_sleeping(int j) {
     printf("@%09d\t clock +10\n", total_time);
     total_time += TIME_CORE_STATE_TRANSITIONS;
     RUNNING_queue[0] = empty_command;
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void enqueue_running() {
@@ -406,7 +388,6 @@ void enqueue_running() {
                 break;
         }
     }
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void running_read(int i) {
@@ -421,7 +402,6 @@ void running_read(int i) {
             break;
         }
     }
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void running_write(int i) {
@@ -434,7 +414,6 @@ void running_write(int i) {
             break;
         }
     }
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void spawn_child(int x) {
@@ -461,7 +440,6 @@ void spawn_child(int x) {
 
     RUNNING_queue[0] = command_array[child_num];
     RUNNING_queue[0].p_id = child_id;
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void complete_process() {
@@ -472,7 +450,6 @@ void complete_process() {
         }
     }
     RUNNING_queue[0] = empty_command;
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void check_children() {    
@@ -490,7 +467,6 @@ void check_children() {
     if (counter == WAIT_queue[0].num_children) {
         enqueue_ready_from_waiting();
     }
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 void spawn_first_proc(int i, char command_name[]) {
@@ -498,7 +474,6 @@ void spawn_first_proc(int i, char command_name[]) {
     READY_queue[0].p_id = p_id;
     printf("@%09d\t p_id%i NEW->READY\n", total_time, p_id);
     p_id++;
-    printf("UT:%i\n", cpu_utilisation);
 }
 
 //  ----------------------------------------------------------------------
@@ -636,7 +611,8 @@ void execute_commands(void) {
                     }
                     else {
                         if (RUNNING_queue[0].time_run >= time_quantum && strcmp(RUNNING_queue[0].name, "") != 0 ) {
-                            printf("@%09d\t tq expired - moving p_id(%i) RUNNING->READY\n", total_time, RUNNING_queue[0].p_id);
+                            printf("@%09d\t time run:%i tq expired - moving p_id(%i) RUNNING->READY\n", total_time, RUNNING_queue[0].time_run, RUNNING_queue[0].p_id);
+                            RUNNING_queue[0].time_run = 0;
                             enqueue_ready_from_running();
                             break;
                         }
@@ -645,9 +621,6 @@ void execute_commands(void) {
                 }
             }
         }
-    /*if (total_time % 5 == 0) {
-        printf("%i\n", cpu_utilisation);
-    }*/
     total_time++; 
     }
 }
