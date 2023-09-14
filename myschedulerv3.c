@@ -6,15 +6,23 @@
 #include <math.h>
 
 /*
-    Notes:
-        For the sleep syscall, the amount of time to sleep is held in the "data_transfer" element of the structure
-        For the spawn syscall, the process to be spawn is held in the "io_device" element of the structure
-
     TODO:
         Create a function that scans the blocked queue for the highest I/O speed, currently it just
         takes the first element
 
+        Does sleep function look for syscall or take just the first one?
         Add functionality for multiple parents in the wait queue
+        Add functionality for a parent to have multiple children
+
+    Marking Rubric:
+        Execution of one process (no I/O), which executes for less than one time-quantum
+        Execution of one process (no I/O), which executes for several time quanta
+        Execution of one process (no I/O), testing the 'sleep' system-call
+        Execution of two concurrent processes (no I/O), testing the 'spawn' system-call
+        Execution of multiple processes (no I/O), testing the 'spawn' and 'wait' system-calls
+        Execution of many concurrent processes (no I/O) alternating execution on the CPU
+        Execution of one process performing I/O
+        Execution of multiple processes performing I/O, competing for the data-bus
 
 */
 
@@ -67,6 +75,7 @@ struct syscalls {
     int exec_time;
     char io_device[MAX_DEVICE_NAME];
     int data_transfer;
+    int dev_read_speed;
     int time_evoked;
     int time_evoking;
     int rw_time_current;
@@ -82,6 +91,7 @@ struct commands {
     int p_id;
     int time_run;
     int child;
+    int time_blocked;
 } commands[MAX_COMMANDS];
 
 struct commands empty_command;
@@ -296,7 +306,7 @@ void shift_wait_queue() {
 }
 
 void enqueue_waiting() {
-    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+    for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
         if (strcmp(WAIT_queue[i].name, "") == 0) {
             WAIT_queue[i] = RUNNING_queue[0];
             RUNNING_queue[0] = empty_command;
@@ -311,7 +321,7 @@ void enqueue_ready_from_waiting() {
     total_time += 10;
 
     int i = 0;
-    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+    for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
         if (strcmp(READY_queue[i].name, "") == 0) {
             READY_queue[i] = WAIT_queue[0];
             WAIT_queue[0] = empty_command;
@@ -322,22 +332,36 @@ void enqueue_ready_from_waiting() {
 }
 
 void enqueue_ready_from_blocked() {
-    int i = 0;
-    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+    // Locate the process (uncompleted syscall) waiting the longest for the device with the fastest read speed
+    /*int fastest_read_speed = 0;
+    int longest_blocked = 0;
+    int fastest_command = 0;
+    for (int x = 0; x < MAX_RUNNING_PROCESSES; x++) {
+        for (int y = 0; y < MAX_SYSCALLS_PER_PROCESS; y++) {
+            if (!BLOCKED_queue[x].syscall_array[y].completed && BLOCKED_queue[x].syscall_array[y].dev_read_speed > fastest_read_speed && if (BLOCKED_queue[x].syscall_array[y].time_blocked > longest_blocked)) {
+                fastest_command = x;
+                break;
+            }
+        }
+    }*/
+
+    int i;
+    for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
         if (strcmp(READY_queue[i].name, "") == 0) {
             READY_queue[i] = BLOCKED_queue[0];
             BLOCKED_queue[0] = empty_command;
+            printf("@%09d\t p_id%i BLOCKED->READY\n", total_time, READY_queue[i].p_id);
+            printf("@%09d\t clock +10\n", total_time);
+            total_time += 10;
+            shift_blocked_queue();
             break;
         }
     }
-    printf("@%09d\t p_id%i BLOCKED->READY\n", total_time, READY_queue[i].p_id);
-    printf("@%09d\t clock +10\n", total_time);
-    total_time += 10;
-    shift_blocked_queue();
+
 }
 
 void enqueue_ready_from_sleeping(int j) {
-    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+    for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
         if (strcmp(READY_queue[i].name, "") == 0) {
             READY_queue[i] = SLEEPING_queue[j];
             READY_queue[i].syscall_array[0].completed = true;
@@ -351,7 +375,7 @@ void enqueue_ready_from_sleeping(int j) {
 }
 
 void enqueue_ready_from_running() {
-    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+    for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
         if (strcmp(READY_queue[i].name, "") == 0) {
             READY_queue[i] = RUNNING_queue[0];
             RUNNING_queue[0] = empty_command;
@@ -365,7 +389,7 @@ void enqueue_ready_from_running() {
 
 void enqueue_blocked() {
     // Find the next free spot at the end of the blocked queue, put RUNNING there
-    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+    for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
         if (strcmp(BLOCKED_queue[i].name, "") == 0) {
             BLOCKED_queue[i] = RUNNING_queue[0];
             break;
@@ -377,7 +401,7 @@ void enqueue_blocked() {
 }
 
 void enqueue_sleeping() {
-    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+    for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
         if (strcmp(SLEEPING_queue[i].name, "") == 0) {
             SLEEPING_queue[i] = RUNNING_queue[0];
             SLEEPING_queue[i].syscall_array[0].time_evoked = total_time;
@@ -412,7 +436,9 @@ void running_read(int i) {
         if (strcmp(RUNNING_queue[0].syscall_array[i].io_device, device_array[j].name) == 0) {
             float time_max = RUNNING_queue[0].syscall_array[i].data_transfer*1.0 / (device_array[j].r_speed / 1000000.0);
             RUNNING_queue[0].syscall_array[i].rw_time_max = roundf(time_max);
-            printf("\n BEGINNING READ PROCESS \t MAX: %2.6f\n", time_max);
+            RUNNING_queue[0].syscall_array[i].dev_read_speed = device_array[j].r_speed;
+            printf("\n BEGINNING READ PROCESS \t MAX: %2.6f\n\n", time_max);
+            printf("\n DEV_READ_SPEED: %i\n\n", RUNNING_queue[0].syscall_array[i].dev_read_speed);
             break;
         }
     }
@@ -423,7 +449,9 @@ void running_write(int i) {
         if (strcmp(RUNNING_queue[0].syscall_array[i].io_device, device_array[j].name) == 0) {
             float time_max = RUNNING_queue[0].syscall_array[i].data_transfer*1.0 / (device_array[j].w_speed / 1000000.0);
             RUNNING_queue[0].syscall_array[i].rw_time_max = roundf(time_max);
-            printf("\n BEGINNING WRITE PROCESS \t MAX: %2.6f\n", time_max);
+            RUNNING_queue[0].syscall_array[i].dev_read_speed = device_array[j].r_speed;
+            printf("\n BEGINNING WRITE PROCESS \t MAX: %2.6f\n\n", time_max);
+            printf("\n DEV_READ_SPEED: %i\n\n", RUNNING_queue[0].syscall_array[i].dev_read_speed);
             break;
         }
     }
@@ -439,13 +467,10 @@ void spawn_child(int x) {
             break;
         }
     }
-    // WHEN IT SPAWNS A CHILD IT GOES TO READY NOT WAITING THEN ASSIGN THE CHILD ID!!!
-    for(int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
-        if (strcmp(WAIT_queue[i].name, "") == 0) {
-            WAIT_queue[i].child = child_id;
-            break;
-        }
-    }
+
+    RUNNING_queue[0].child = child_id;
+    printf("@%09d\t moving p_id(%i) RUNNING->READY\n", total_time, RUNNING_queue[0].p_id);
+    printf("\n\n child: %i\n\n", WAIT_queue[0].child);
     enqueue_ready_from_running();
     RUNNING_queue[0] = command_array[y];
     RUNNING_queue[0].p_id = child_id;
@@ -510,8 +535,14 @@ void execute_commands(void) {
                         }
                     }
                     if (strcmp(BLOCKED_queue[0].name, "") != 0) {
+                        for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
+                            BLOCKED_queue[i].time_blocked++;
+                            printf("PID(%i) - TB: %i\n", BLOCKED_queue[i].p_id, BLOCKED_queue[i].time_blocked);
+                            break;
+                        }
                         enqueue_ready_from_blocked();
                     }
+    
                     if (strcmp(WAIT_queue[0].name, "") != 0) {
                         check_children();
                     }
@@ -541,6 +572,8 @@ void execute_commands(void) {
                             break;
                         }
                         else if (strcmp(RUNNING_queue[0].syscall_array[current].name, "read") == 0) {
+                            printf("@%09d\t FIRST TIME ACQUIRING DATA BUS clock +20\n", total_time);
+                            total_time += 20;
                             running_read(current);
                             RUNNING_queue[0].syscall_array[current].time_evoking++;
                             break;
@@ -575,7 +608,7 @@ void execute_commands(void) {
             }
         }
 
-        // If the running process has not exceeded the time quantum, let it run for one more usec
+        // Check the time_run variable, then check the read-write process completion if necessary
         if (RUNNING_queue[0].time_run < time_quantum && strcmp(RUNNING_queue[0].name, "") != 0 ) {
             RUNNING_queue[0].time_run++;
             for (int i = 0; i < MAX_SYSCALLS_PER_PROCESS; i++) {
@@ -584,6 +617,7 @@ void execute_commands(void) {
                         RUNNING_queue[0].syscall_array[i].rw_time_current++;
                         if (RUNNING_queue[0].time_run >= time_quantum) {
                             printf("@%09d\t tq expired for I/O - moving p_id(%i) RUNNING->BLOCKED\n", total_time, RUNNING_queue[0].p_id);
+                            RUNNING_queue[0].time_blocked = 0;
                             enqueue_blocked();
                         }
                     }
@@ -602,11 +636,6 @@ void execute_commands(void) {
         }
     total_time++;
     }
-    printf("running: %s\n", RUNNING_queue[0].name);
-    printf("ready: %s\n", READY_queue[0].name);
-    printf("blocked: %s\n", BLOCKED_queue[0].name);
-    printf("wait: %s\n", WAIT_queue[0].name);
-    printf("sleeping: %s\n", SLEEPING_queue[0].name);
 }
 
 //  ----------------------------------------------------------------------
