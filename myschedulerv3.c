@@ -6,9 +6,12 @@
 #include <math.h>
 
 /*
+    Notes for Jared:
+        Spawn and wait are working currently as intended :)
+        Check out the TODO:
+    
     TODO:
-        Create a function that scans the blocked queue for the highest I/O speed, currently it just
-        takes the first element
+        Scan BLOCKED_queue for the highest I/O speed to put into ready/running, currently it just takes the first element
 
         Does sleep function look for syscall or take just the first one?
         Add functionality for multiple parents in the wait queue
