@@ -118,18 +118,9 @@ void read_sysconfig(char filename[])
             }
         }
     }
-
     for (int i = 0; i < 4; i++) {                           // Adds the device structures to an array of device structures
         device_array[i] = devices[i];
     }
-
-    printf("Devices Found: %i\n", device_num);
-    for (int i = 0; i < 4; i++) {                           // To test the function, print all the sysconfig variables
-        printf("Name: %s ", devices[i].name);
-        printf("R: %i ", devices[i].r_speed);
-        printf("W: %i\n", devices[i].w_speed);
-    }
-    printf("Time Quantum: %d\n", time_quantum);
 }
 
 //  ----------------------------------------------------------------------
@@ -147,35 +138,28 @@ void read_commands(char filename[])
         exit(EXIT_FAILURE);
     }
     while(fgets(line, sizeof line, file) != NULL) {
-
         if (next_line_is_name == true) {                                        // If this line was preceded by a "#" line, it is the name of the next command 
             line[strcspn(line, "\r\n")] = 0;
             strcpy(commands[command_num].name, line);
             next_line_is_name = false;
             continue;
         }
-
         if (line[0] == CHAR_COMMENT) {                      // Skips comment lines beginning with "#"
             command_num++;                                  // Each command is preceded by a "#" so we will go to the next command
             syscall_num = 0;
             next_line_is_name = true;                          
             continue;
         }
-
         char *token = strtok(line, " ");
         int counter = 0;
-
         while (token != 0) {
             token[strcspn(token, "\r\n")] = 0;
-
             if (counter == 0) {
                 commands[command_num].syscall_array[syscall_num].exec_time = atoi(token);
             }
-
             if (counter == 1) {
                 strcpy(commands[command_num].syscall_array[syscall_num].name, token);
             }
-
             if (counter == 2) {
                 if (isdigit(token[0])) {
                     commands[command_num].syscall_array[syscall_num].data_transfer = atoi(token);
@@ -185,21 +169,17 @@ void read_commands(char filename[])
                     strcpy(commands[command_num].syscall_array[syscall_num].io_device, token);
                 }
             }
-
             if (counter == 3) {
                 commands[command_num].syscall_array[syscall_num].data_transfer = atoi(token);
             }
-
             counter++;
             token = strtok(0, " ");
         }
         syscall_num++;
     }
-
     for (int i = 0; i < command_num; i++) {
         command_array[i] = commands[i];
     }
-
     for (int i = 0; i < command_num; i++) {
         int prev_exec_time = 0;
         int current_exec_time = 0;
@@ -211,26 +191,9 @@ void read_commands(char filename[])
             }
         }
     }
-
-    printf("Commands Found: %i\n", command_num);
-    for (int i = 0; i < 4; i++) {
-        printf("\nCommand Name: %s\n", command_array[i].name);
-        for (int j = 0; j < 5; j++) {                                                   // CHANGE THIS J VALUE EVENTUALLY!
-            printf("exec_time: %i ", command_array[i].syscall_array[j].exec_time);
-            printf("name: %s ", command_array[i].syscall_array[j].name);
-            printf("io_device: %s ", command_array[i].syscall_array[j].io_device);
-            printf("data_transfer: %i\n", command_array[i].syscall_array[j].data_transfer);
-        }
-    }
 }
 
 //  ----------------------------------------------------------------------
-
-void print_exec_times() {
-    for (int i = 0; i < MAX_SYSCALLS_PER_PROCESS; i++) {
-        printf("sys[%i]:%i ", i, RUNNING_queue[0].syscall_array[i].exec_time);
-    }
-}
 
 void shift_ready_queue() {
     for (int i = 0; i < MAX_COMMANDS; i++) {
@@ -326,8 +289,6 @@ void enqueue_ready_from_sleeping(int x, int y) {
     }
     printf("@%09d\t clock +10\n", total_time);
     total_time += TIME_CORE_STATE_TRANSITIONS;
-
-    // Shuffle sleeping queue
     for (int i = empty_space; i < MAX_COMMANDS - empty_space; i++) {
         SLEEPING_queue[i] = SLEEPING_queue[i+1];
     }
@@ -347,7 +308,6 @@ void enqueue_ready_from_running() {
 }
 
 void enqueue_blocked() {
-    // Find the next free spot at the end of the blocked queue, put RUNNING there
     for (int i = 0; i < MAX_RUNNING_PROCESSES; i++) {
         if (strcmp(BLOCKED_queue[i].name, "") == 0) {
             BLOCKED_queue[i] = RUNNING_queue[0];
@@ -374,8 +334,6 @@ void enqueue_sleeping(int j) {
 }
 
 void enqueue_running() {
-    // Check if the ready queue has anything in it
-    // If it does then queue the next item into running
     RUNNING_queue[0] = READY_queue[0];
     printf("@%09d\t p_id%i READY->RUNNING\n", total_time, RUNNING_queue[0].p_id);
     shift_ready_queue();
@@ -417,18 +375,17 @@ void running_write(int i) {
 }
 
 void spawn_child(int x) {
-    RUNNING_queue[0].num_children++;
     int child_id = p_id;
     p_id++;
     int child_num = 0;
 
+    RUNNING_queue[0].num_children++;
     for (int y = 0; y < MAX_COMMANDS; y++) {
         if (strcmp(RUNNING_queue[0].syscall_array[x].io_device, command_array[y].name) == 0) {
             child_num = y;
             break;
         }
     }
-
     for (int i = 0; i < MAX_SYSCALLS_PER_PROCESS; i++) {
         if (RUNNING_queue[0].children[i] == 0) {
             RUNNING_queue[0].children[i] = child_id;
@@ -437,7 +394,6 @@ void spawn_child(int x) {
     }
     printf("@%09d\t moving p_id(%i) RUNNING->READY\n", total_time, RUNNING_queue[0].p_id);
     enqueue_ready_from_running();
-
     RUNNING_queue[0] = command_array[child_num];
     RUNNING_queue[0].p_id = child_id;
 }
