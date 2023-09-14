@@ -124,8 +124,7 @@ void read_sysconfig(char filename[])
         }
 
         if (line[0] == CHAR_TIME_QUANTUM) {
-            char *token = strtok(line, " ");                // Creates a token of the time quantum line
-            time_quantum = atoi(strtok(0, " "));
+            time_quantum = atoi(strtok(line, " "));                
         }
     }
 
