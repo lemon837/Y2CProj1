@@ -1,16 +1,16 @@
-
 #
-First
-       5usecs   exit
+shell
+       20usecs    spawn     cal
+       40usecs    spawn     cal2
+       60usecs    wait
+       80usecs    write     hd     240000B
+       90usecs    exit
 #
-Second
-       10usecs   exit
+cal
+       20usecs     write     ssd     480000B
+       40usecs     exit
 #
-shortsleep
-       10usecs    sleep   1000000usecs
-       50usecs    exit
-#
-longsleep
-       10usecs    sleep   5000000usecs
-       50usecs    exit
+cal2
+       20usecs     write     usb3.1     480000B
+       40usecs     exit
 #
