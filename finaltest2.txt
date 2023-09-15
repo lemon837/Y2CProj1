@@ -1,0 +1,16 @@
+#
+seven
+	20usecs	write	hd	48000B
+	30usecs	spawn	eight	
+	40usecs	spawn	nine
+	50usecs	wait
+	100usecs	exit
+#
+eight
+	10usecs	read	usb3.1	48000B
+	20usecs	exit
+#
+nine
+	10usecs	read	hd	48000B
+	20usecs	exit
+#

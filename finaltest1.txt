@@ -1,0 +1,15 @@
+#
+sleepy
+	20usecs	spawn	shortsleep
+	30usecs	spawn	longsleep
+	100usecs	wait
+	120usecs	exit
+#
+shortsleep
+	20usecs	sleep	1000usecs
+	40usecs	exit
+#
+longsleep
+	20usecs	sleep	2000usecs
+	40usecs	exit
+#
